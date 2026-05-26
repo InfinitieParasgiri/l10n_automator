@@ -16,6 +16,17 @@ import 'safety/post_validator.dart';
 import 'scanner/dart_ast_scanner.dart';
 import 'scanner/file_walker.dart';
 
+/// Per-file rollup of how many literals fell into each decision bucket.
+class FileBreakdown {
+  FileBreakdown({this.localize = 0, this.review = 0, this.skip = 0});
+
+  int localize;
+  int review;
+  int skip;
+
+  int get total => localize + review + skip;
+}
+
 /// Summary of a pipeline run. Returned to commands for reporting.
 class PipelineSummary {
   PipelineSummary({
@@ -28,6 +39,7 @@ class PipelineSummary {
     this.backupDir,
     this.analyzeError,
     this.appliedChanges = false,
+    this.byFile = const {},
   });
 
   final int filesScanned;
@@ -39,6 +51,10 @@ class PipelineSummary {
   final String? backupDir;
   final String? analyzeError;
   final bool appliedChanges;
+
+  /// Per-file breakdown, keyed by absolute file path. Empty when no files
+  /// were scanned (e.g. `extract` early-exit on a dirty git tree).
+  final Map<String, FileBreakdown> byFile;
 }
 
 /// Orchestrates the full scan → classify → merge → rewrite pipeline.
@@ -105,8 +121,18 @@ class Pipeline {
     final byDecision = <Decision, int>{
       for (final d in Decision.values) d: 0,
     };
+    final byFile = <String, FileBreakdown>{};
     for (final c in allCandidates) {
       byDecision[c.decision] = (byDecision[c.decision] ?? 0) + 1;
+      final fb = byFile.putIfAbsent(c.filePath, FileBreakdown.new);
+      switch (c.decision) {
+        case Decision.localize:
+          fb.localize++;
+        case Decision.review:
+          fb.review++;
+        case Decision.skip:
+          fb.skip++;
+      }
     }
 
     // 4. Pick the set we'll actually rewrite.
@@ -149,6 +175,7 @@ class Pipeline {
         editsApplied: 0,
         filesWritten: const [],
         appliedChanges: false,
+        byFile: byFile,
       );
     }
 
@@ -161,6 +188,7 @@ class Pipeline {
         editsApplied: 0,
         filesWritten: const [],
         appliedChanges: false,
+        byFile: byFile,
       );
     }
 
@@ -223,6 +251,7 @@ class Pipeline {
       backupDir: backupDir,
       analyzeError: analyzeError,
       appliedChanges: analyzeError == null,
+      byFile: byFile,
     );
   }
 
@@ -259,8 +288,18 @@ class Pipeline {
     final byDecision = <Decision, int>{
       for (final d in Decision.values) d: 0,
     };
+    final byFile = <String, FileBreakdown>{};
     for (final c in all) {
       byDecision[c.decision] = (byDecision[c.decision] ?? 0) + 1;
+      final fb = byFile.putIfAbsent(c.filePath, FileBreakdown.new);
+      switch (c.decision) {
+        case Decision.localize:
+          fb.localize++;
+        case Decision.review:
+          fb.review++;
+        case Decision.skip:
+          fb.skip++;
+      }
     }
     // Silence unused-variable warning for stack; it's available if a future
     // version of scanOnly wants stack-specific reporting.
@@ -272,6 +311,7 @@ class Pipeline {
       newKeys: byDecision[Decision.localize] ?? 0,
       editsApplied: 0,
       filesWritten: const [],
+      byFile: byFile,
     );
   }
 

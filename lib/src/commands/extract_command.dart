@@ -37,7 +37,21 @@ class ExtractCommand extends Command<int> {
               'Snapshot touched files to .localizator/backup/ before changes.')
       ..addFlag('force',
           defaultsTo: false,
-          help: 'Run even on a dirty git tree.');
+          help: 'Run even on a dirty git tree.')
+      ..addFlag('by-file',
+          abbr: 'f',
+          defaultsTo: false,
+          help: 'Print a per-file breakdown of localize / review counts '
+              'after the summary.')
+      ..addFlag('include-skip',
+          defaultsTo: false,
+          help: 'In --by-file output, also include files whose only hits '
+              'are skipped literals.')
+      ..addOption('top',
+          defaultsTo: '50',
+          help: 'In --by-file output, show at most N files. Use 0 to '
+              'show all.',
+          valueHelp: 'N');
   }
 
   @override
@@ -57,7 +71,17 @@ class ExtractCommand extends Command<int> {
     );
     try {
       final summary = await pipeline.run();
-      Reporter.printSummary(summary, stdout);
+      final byFile = argResults?['by-file'] as bool? ?? false;
+      final includeSkip = argResults?['include-skip'] as bool? ?? false;
+      final top = int.tryParse(argResults?['top'] as String? ?? '50') ?? 50;
+      Reporter.printSummary(
+        summary,
+        stdout,
+        byFile: byFile,
+        topN: top,
+        projectRoot: projectRoot,
+        includeSkip: includeSkip,
+      );
       if (summary.analyzeError != null) {
         stderr.writeln(
             '\n❌ dart analyze reported errors after rewrite — rolled back.');

@@ -22,5 +22,8 @@ Initial release as `l10n_automator` (Flutter package + CLI).
   `doctor`, `rollback`.
 - `scan` / `extract` / `doctor` accept `--path` / `-p` (repeatable) to
   target a specific file, folder, or glob instead of the whole `lib/`.
+- `scan` / `extract` accept `--by-file` / `-f` to print a per-file
+  breakdown of localize / review counts after the summary, with `--top N`
+  and `--include-skip` modifiers.
 - Runtime helpers: `L10nAutomatorBootstrap`, `MissingTranslationBanner` —
   debug-only badges/log for `[TODO]` translations, no-op in release builds.

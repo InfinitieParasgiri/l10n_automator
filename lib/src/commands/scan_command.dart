@@ -24,7 +24,21 @@ class ScanCommand extends Command<int> {
               'Limit scanning to these files / directories / globs (relative '
               'to project root). Repeat to add more. When omitted, the whole '
               'lib/ directory is scanned.',
-          valueHelp: 'file-or-glob');
+          valueHelp: 'file-or-glob')
+      ..addFlag('by-file',
+          abbr: 'f',
+          defaultsTo: false,
+          help: 'Print a per-file breakdown of localize / review counts '
+              'after the summary.')
+      ..addFlag('include-skip',
+          defaultsTo: false,
+          help: 'In --by-file output, also include files whose only hits '
+              'are skipped literals.')
+      ..addOption('top',
+          defaultsTo: '50',
+          help: 'In --by-file output, show at most N files. Use 0 to '
+              'show all.',
+          valueHelp: 'N');
   }
 
   @override
@@ -33,6 +47,11 @@ class ScanCommand extends Command<int> {
     final config = Config.load(projectRoot,
         overridePath: argResults?['config'] as String?);
     final paths = (argResults?['path'] as List<String>?) ?? const [];
+    final byFile = argResults?['by-file'] as bool? ?? false;
+    final includeSkip = argResults?['include-skip'] as bool? ?? false;
+    final topRaw = argResults?['top'] as String? ?? '50';
+    final top = int.tryParse(topRaw) ?? 50;
+
     final pipeline = Pipeline(
       projectRoot: projectRoot,
       config: config,
@@ -41,7 +60,14 @@ class ScanCommand extends Command<int> {
       includePaths: paths,
     );
     final summary = pipeline.scanOnly();
-    Reporter.printSummary(summary, stdout);
+    Reporter.printSummary(
+      summary,
+      stdout,
+      byFile: byFile,
+      topN: top,
+      projectRoot: projectRoot,
+      includeSkip: includeSkip,
+    );
     return 0;
   }
 }

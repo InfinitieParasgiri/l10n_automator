@@ -72,6 +72,9 @@ short-circuits to a transparent no-op.
 | Flag | Effect |
 |---|---|
 | `--path`, `-p <file-or-glob>` | Limit the run to one file, directory, or glob (relative to project root). Repeatable. When omitted, the whole `lib/` directory is scanned. |
+| `--by-file`, `-f` | After the summary, print a per-file table of localize / review counts (sorted by actionable hits). |
+| `--top <N>` | With `--by-file`, show at most N rows. Use `0` to show all. Default `50`. |
+| `--include-skip` | With `--by-file`, also include files whose only hits are skipped literals. |
 | `--auto` | No interactive prompts. Only apply rewrites the classifier is confident about. |
 | `--dry-run` | Show what would change, but write nothing. |
 | `--no-backup` | Skip the backup snapshot. Not recommended. |
@@ -103,6 +106,40 @@ dart run l10n_automator extract \
 The exclude rules from `.localizator.yaml` (generated files, tests, etc.)
 still apply on top of `--path`, so you can safely point it at a parent
 directory without dragging in `*.g.dart` siblings.
+
+### Per-file breakdown
+
+Big projects produce big totals. Add `--by-file` (`-f`) to see which files
+actually contain the work:
+
+```bash
+dart run l10n_automator scan --by-file
+dart run l10n_automator scan -f --top 20
+dart run l10n_automator scan -f --include-skip   # show "nothing to do" files too
+```
+
+Sample output:
+
+```
+Localization Automator — summary
+  files scanned  : 529
+  literals found : 13579
+    localize     : 36
+    review       : 4856
+    skip         : 8687
+  (no changes written)
+
+By file (top 50 of 312):
+  file                                                  localize  review  total
+  ----------------------------------------------------  --------  ------  -----
+  lib/features/news/view/news_detail_page.dart                12     184    196
+  lib/features/onboarding/view/welcome_page.dart               6      71     77
+  …
+```
+
+Rows are sorted by `localize + review` (descending), so the files that need
+your attention surface at the top — files whose only hits were skipped are
+hidden unless you pass `--include-skip`.
 
 ## How it works
 
