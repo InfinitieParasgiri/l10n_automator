@@ -1,0 +1,38 @@
+name: l10n_automator
+description: >-
+  Scans a Flutter project's lib/ for hardcoded UI strings, extracts them into
+  ARB/JSON localization files, and rewrites the source to use the project's
+  localization API. Ships with a CLI plus small runtime Flutter helpers.
+  Supports flutter_localizations and easy_localization.
+version: 0.1.0
+homepage: https://github.com/InfinitieParasgiri/l10n_automator
+repository: https://github.com/InfinitieParasgiri/l10n_automator
+issue_tracker: https://github.com/InfinitieParasgiri/l10n_automator/issues
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+  flutter: '>=3.10.0'
+
+executables:
+  l10n_automator: l10n_automator
+
+dependencies:
+  flutter:
+    sdk: flutter
+  analyzer: '>=6.4.0 <8.0.0'
+  args: ^2.4.0
+  yaml: ^3.1.2
+  glob: ^2.1.2
+  path: ^1.9.0
+  collection: ^1.18.0
+  crypto: ^3.0.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  test: ^1.24.0
+
+flutter:
+  # No bundled assets or plugin platforms — the runtime helpers are pure Dart
+  # widgets that consume your project's ARB / easy_localization setup.
