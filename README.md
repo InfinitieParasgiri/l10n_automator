@@ -1,23 +1,43 @@
 # l10n_automator
 
-A Flutter package that scans your `lib/`, extracts hardcoded UI strings into
-an ARB (or JSON) localization file, and rewrites the source to call your
-localization API. Supports both `flutter_localizations` and
-`easy_localization`. Uses `package:analyzer` for AST-based detection and
-rewriting — never regex on Dart source.
+> **Find every hardcoded string in your Flutter app, move it to ARB, and rewire the source — without writing regex over your code.**
 
-Ships with:
+`l10n_automator` is a Flutter package + CLI that:
 
-- a CLI (`dart run l10n_automator …`) for one-shot extraction, and
-- runtime Flutter helpers (`L10nAutomatorBootstrap`, `MissingTranslationBanner`)
-  that surface forgotten / `[TODO]` translations during development.
+1. **Scans** your `lib/` with `package:analyzer` (an AST, not regex).
+2. **Classifies** every string as something to translate, something to skip, or something for you to review.
+3. **Extracts** the keepers into your ARB / JSON localization files and **rewrites** the source to call your localization API.
+4. **Verifies** with `dart format` + `dart analyze`, and rolls back automatically if anything breaks.
 
-## Install (from Git)
+Works with both `flutter_localizations` (the official ARB stack) and `easy_localization`.
+
+---
+
+## Table of contents
+
+- [Install](#install)
+- [60-second quickstart](#60-second-quickstart)
+- [Recommended workflow on a big project](#recommended-workflow-on-a-big-project)
+- [The three buckets: localize / review / skip](#the-three-buckets-localize--review--skip)
+- [Commands](#commands)
+- [Scanning specific files](#scanning-specific-files)
+- [Per-file breakdown](#per-file-breakdown)
+- [Inline directives](#inline-directives)
+- [Recommended `.localizator.yaml`](#recommended-localizatoryaml)
+- [Runtime helper (optional)](#runtime-helper-optional)
+- [Safety guarantees](#safety-guarantees)
+- [FAQ / troubleshooting](#faq--troubleshooting)
+- [Limitations](#limitations)
+- [License](#license)
+
+---
+
+## Install
 
 In your Flutter project's `pubspec.yaml`:
 
 ```yaml
-dependencies:
+dev_dependencies:
   l10n_automator:
     git:
       url: https://github.com/InfinitieParasgiri/l10n_automator.git
@@ -28,15 +48,319 @@ Then:
 
 ```bash
 flutter pub get
-dart run l10n_automator init     # writes .localizator.yaml
-dart run l10n_automator scan     # dry-run report
-dart run l10n_automator extract  # interactive run
 ```
 
-> Tip: if you only need the CLI and don't want the runtime helpers shipped to
-> production, put it under `dev_dependencies` instead of `dependencies`.
+> **Why `dev_dependencies`?** The CLI is only used during development. Putting it under `dev_dependencies` keeps the package out of your release build. If you also want the runtime helper widgets (`L10nAutomatorBootstrap`, `MissingTranslationBanner`), move it to `dependencies` instead.
+
+---
+
+## 60-second quickstart
+
+```bash
+# 1. Drop a config file at the project root
+dart run l10n_automator init
+
+# 2. See what's hardcoded, file by file
+dart run l10n_automator scan --by-file
+
+# 3. Dry-run on one screen to preview changes
+dart run l10n_automator extract --dry-run -p lib/screens/login_page.dart
+
+# 4. Apply for real (interactive — you approve each "review" string)
+dart run l10n_automator extract -p lib/screens/login_page.dart
+
+# 5. If anything looks wrong, undo the last run
+dart run l10n_automator rollback
+```
+
+That's the whole loop. Don't run `extract` over your whole `lib/` on the first try — see the next section.
+
+---
+
+## Recommended workflow on a big project
+
+Running `extract` over thousands of files on day one is overwhelming and produces a noisy diff. Here's a sane order:
+
+**Step 1 — Get a feel for the codebase.**
+
+```bash
+dart run l10n_automator scan -f
+```
+
+Look at the per-file table. If you see files at the top that you'd never want to translate (generated localization files, JSON models, route definitions, API endpoint constants), they're noise. Two ways to drop them:
+
+- **Quick and global:** add their paths to `ignore.files` in `.localizator.yaml`.
+- **Per-file:** add `// l10n_automator:ignore_for_file` at the top of the file.
+
+See [Recommended `.localizator.yaml`](#recommended-localizatoryaml) for a starter set of ignore globs that handles the usual suspects.
+
+**Step 2 — Inspect anything suspicious.**
+
+```bash
+dart run l10n_automator doctor -p lib/Model/some_model.dart
+```
+
+`doctor` prints the actual string values plus the reason the classifier left them in the review queue. If they're all JSON keys like `"id"`, `"name"`, `"created_at"`, exclude the file.
+
+**Step 3 — Extract one screen at a time.**
+
+```bash
+dart run l10n_automator extract -p lib/screens/login_page.dart
+```
+
+You'll be prompted for each `review` candidate. Accept, skip, or give it a custom key. Commit the diff. Move on to the next screen.
+
+**Step 4 — Once the noise is gone, do an unattended sweep.**
+
+```bash
+dart run l10n_automator extract --auto
+```
+
+`--auto` only rewrites the high-confidence `localize` bucket. Anything the classifier wasn't sure about is left untouched.
+
+---
+
+## The three buckets: localize / review / skip
+
+Every string literal in your code falls into exactly one of these:
+
+### `localize` — rewritten automatically
+
+The classifier has a positive UI signal. Examples:
+
+```dart
+Text('Welcome back')                                 // ← positional arg to Text
+TextField(decoration: InputDecoration(
+  hintText: 'Search...',                             // ← known UI named arg
+  labelText: 'Query',
+))
+SelectableText('Tap below to continue')
+Tooltip(message: 'Close')
+```
+
+Rewritten into:
+
+```dart
+Text(AppLocalizations.of(context)!.welcomeBack)
+```
+
+…plus a new entry in `app_en.arb` (and `[TODO]` placeholders in your other locales).
+
+### `skip` — left alone, never asked about
+
+The classifier has a positive *non-UI* signal:
+
+- Asset paths: `Image.asset('assets/logo.png')`, `SvgPicture.asset(...)`, `Lottie.asset(...)`, `AssetImage(...)`, `rootBundle.load*(...)`
+- Routes: `Navigator.pushNamed(context, '/details')`, GoRouter path strings
+- Logs: `print(...)`, `debugPrint(...)`, `developer.log(...)`, `logger.d/i/w/e(...)`, `talker.info(...)`
+- System APIs: `RegExp(...)`, `DateFormat(...)`, `MethodChannel(...)`, `EventChannel(...)`, `Uri.parse(...)`, `String.fromEnvironment(...)`
+- Annotations: `@JsonKey(name: 'foo')`, `@Deprecated('reason')`
+- Map keys and index lookups: `{'Content-Type': 'application/json'}`, `json['userId']`
+- URLs (`https://...`, `mailto:...`), file extensions, env-style `ALL_CAPS_TOKENS`
+- Empty / whitespace-only / no-letters strings
+- Generated files: `*.g.dart`, `*.freezed.dart`, `*.gr.dart`, `*.mocks.dart`, `*.config.dart`, anything under `generated/`, `.dart_tool/`, `build/`
+- Test files: `test/`, `integration_test/`
+
+### `review` — you decide
+
+The classifier has *no* signal either way. Examples:
+
+```dart
+throw Exception('User not found');     // might be a user-facing error, might not
+const errorMessage = 'Login failed';   // top-level const — UI label? config?
+final greeting = 'Hi ' + user.name;    // concat — needs rewriting to interpolation first
+```
+
+Interactive `extract` prompts you for each one. `extract --auto` skips them all.
+
+> **Heads-up:** the classifier is *syntactic* — it doesn't know types. A string like `"id"` inside a `Map<String, dynamic>` constructor can look the same as a UI label. If you see model-file noise in the review queue, exclude those files (see the [recommended config](#recommended-localizatoryaml)).
+
+---
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `init` | Create `.localizator.yaml` in the project root with default settings. Add `--force` to overwrite an existing file. |
+| `scan` | Walk `lib/` (or `--path` targets), classify every string literal, print a summary. Never writes. |
+| `extract` | Run the full pipeline: extract → merge into ARB → rewrite source → format → analyze. Interactive by default. |
+| `doctor` | Validate config, report the detected stack, dump the review queue with each string's value and the reason it was flagged. |
+| `rollback` | Restore source files from the most recent backup snapshot. |
+
+### `scan` / `extract` flags
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--path`, `-p <file-or-glob>` | scan all of `lib/` | Limit the run to one file, directory, or glob (relative to project root). Repeatable. |
+| `--by-file`, `-f` | off | Print a per-file table after the summary, sorted by actionable hits. |
+| `--top <N>` | `50` | With `--by-file`, cap the table at N rows. `0` = no cap. |
+| `--include-skip` | off | With `--by-file`, also include files whose only hits are skipped. |
+| `--auto` (extract only) | off | No prompts. Only rewrite the high-confidence `localize` bucket. |
+| `--dry-run` (extract only) | off | Show what would change, write nothing. |
+| `--no-backup` (extract only) | on | Skip the backup snapshot. Not recommended. |
+| `--force` (extract only) | off | Run even on a dirty git tree. |
+| `--config <path>` | `.localizator.yaml` | Use a different config file. |
+
+---
+
+## Scanning specific files
+
+By default `scan` / `extract` / `doctor` walk all of `lib/`. To target a single screen, a folder, or any glob, pass one or more `--path` (`-p`) arguments — it's repeatable:
+
+```bash
+# one file
+dart run l10n_automator extract -p lib/screens/login_page.dart
+
+# a whole folder
+dart run l10n_automator extract -p lib/screens
+
+# a glob — quote it so your shell doesn't expand it first
+dart run l10n_automator scan -p 'lib/features/**/view/*.dart'
+
+# multiple targets in one run
+dart run l10n_automator extract \
+  -p lib/screens/login_page.dart \
+  -p lib/screens/signup_page.dart
+```
+
+The exclude rules from `.localizator.yaml` still apply on top of `--path`, so pointing at a parent folder won't drag in `*.g.dart` siblings.
+
+---
+
+## Per-file breakdown
+
+Big projects produce big totals. `--by-file` (`-f`) shows where the work actually lives:
+
+```bash
+dart run l10n_automator scan -f                  # top 50 most actionable
+dart run l10n_automator scan -f --top 20         # cap at 20
+dart run l10n_automator scan -f --top 0          # show everything
+dart run l10n_automator scan -f --include-skip   # also show files with only skipped hits
+```
+
+Sample output:
+
+```
+Localization Automator — summary
+  files scanned  : 529
+  literals found : 13579
+    localize     : 36
+    review       : 4856
+    skip         : 8687
+  (no changes written)
+
+By file (top 50 of 312):
+  file                                              localize  review  total
+  ------------------------------------------------  --------  ------  -----
+  lib/features/news/view/news_detail_page.dart           12     184    196
+  lib/features/onboarding/view/welcome_page.dart          6      71     77
+  …
+```
+
+Rows are sorted by `localize + review` (descending). Files whose only hits were skipped are hidden by default — the top of the list is always the files you'd actually want to act on.
+
+---
+
+## Inline directives
+
+Override the tool's classification with line-level or file-level comments:
+
+```dart
+// Skip this single string, no matter what the classifier thinks.
+// l10n:ignore
+final secret = 'AAAA-BBBB-CCCC';
+
+// Force this string into a specific key.
+// l10n:key=loginCta
+Text('Sign in');
+```
+
+Skip an entire file (put this anywhere in the first 10 lines):
+
+```dart
+// l10n_automator:ignore_for_file
+```
+
+The legacy spelling `// localization_automator:ignore_for_file` is also accepted.
+
+---
+
+## Recommended `.localizator.yaml`
+
+`dart run l10n_automator init` writes a sensible default. For a real-world Flutter project, here's a starter that drops the usual noise (generated localization files, JSON models, routes/config constants):
+
+```yaml
+stack: auto                       # auto | flutter_localizations | easy_localization
+
+# flutter_localizations options (ignored when stack resolves to easy_localization)
+arb_dir: lib/l10n
+template_arb_file: app_en.arb
+output_class: AppLocalizations
+
+# easy_localization options (ignored when stack resolves to flutter_localizations)
+translations_dir: assets/translations
+fallback_locale: en
+
+key_naming:
+  style: camelCase                # camelCase | snake_case
+  max_length: 40
+  prefix: ""
+
+min_string_length: 2
+
+ignore:
+  files:
+    # Generated code
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+    - "**/*.gr.dart"
+    - "**/*.mocks.dart"
+    - "**/*.config.dart"
+    - "**/generated/**"
+    - "**/.dart_tool/**"
+    - "**/build/**"
+    # Tests — would break assert-on-literal tests
+    - "**/test/**"
+    - "**/integration_test/**"
+    # Output of `flutter gen-l10n` — these ARE the translations
+    - "lib/l10n/**"
+    - "**/app_localizations*.dart"
+    # JSON / API model classes — strings are field names, not UI
+    - "lib/Model/**"
+    - "lib/**/model/**"
+    - "lib/**/models/**"
+    - "lib/**/*_model.dart"
+    # Routes & config constants
+    - "lib/routes/**"
+    - "lib/config/**"
+
+  patterns:
+    - "^https?://"                # URLs
+    - "^/api/"                    # API paths
+    - "^mailto:"
+    - "\\.(png|jpg|jpeg|gif|webp|svg|json|mp3|mp4|webm|ttf|otf|lottie)$"
+    - "^[A-Z0-9_]{16,}$"          # long ALL_CAPS_TOKENS (API keys, env)
+
+review:
+  exceptions: true                # ask about strings inside throw Exception(...)
+  top_level_consts: true          # ask about top-level const strings
+
+context:
+  on_missing_build_context: skip  # skip | error | prompt
+
+post_actions:
+  run_formatter: true             # dart format on touched files
+  run_analyzer: true              # dart analyze; rollback on new errors
+  run_gen_l10n: true              # flutter gen-l10n after merging into ARB
+```
+
+Drop that into `.localizator.yaml` at your project root and run `dart run l10n_automator scan -f` again — the table will be dramatically shorter.
+
+---
 
 ## Runtime helper (optional)
+
+The package also exports two tiny Flutter widgets that help you catch missing translations during development. They're a no-op in release builds.
 
 ```dart
 import 'package:flutter/material.dart';
@@ -52,267 +376,76 @@ void main() {
 }
 ```
 
-In debug builds, the wrapper logs unresolved review items and overlays a
-small `[TODO]` badge over `Text` widgets you wrap with
-`MissingTranslationBanner(value: …, child: …)`. In release builds it
-short-circuits to a transparent no-op.
+In debug builds:
 
-## Commands
+- `L10nAutomatorBootstrap` logs a one-line reminder pointing at the review report from your last CLI run.
+- `MissingTranslationBanner(value: someLocalized, child: Text(someLocalized))` paints a tiny `[TODO]` pill over any widget whose `value` still contains a `[TODO]` placeholder (the prefix the CLI writes into non-English ARB files for untranslated keys).
 
-| Command | What it does |
-|---|---|
-| `init` | Create `.localizator.yaml` in the project root with default settings. |
-| `scan` | Walk `lib/`, classify every string literal, print a summary. No writes. |
-| `extract` | Run the full pipeline: extract → merge into ARB → rewrite source → format → analyze. Interactive by default. |
-| `doctor` | Validate config, report the detected stack, list the review queue. |
-| `rollback` | Restore source files from the most recent backup snapshot. |
+In profile / release builds, both widgets short-circuit and just return their child.
 
-### `extract` flags
+> If you don't want the runtime widgets in your release binary, put the package under `dev_dependencies` and don't import it from `lib/`.
 
-| Flag | Effect |
-|---|---|
-| `--path`, `-p <file-or-glob>` | Limit the run to one file, directory, or glob (relative to project root). Repeatable. When omitted, the whole `lib/` directory is scanned. |
-| `--by-file`, `-f` | After the summary, print a per-file table of localize / review counts (sorted by actionable hits). |
-| `--top <N>` | With `--by-file`, show at most N rows. Use `0` to show all. Default `50`. |
-| `--include-skip` | With `--by-file`, also include files whose only hits are skipped literals. |
-| `--auto` | No interactive prompts. Only apply rewrites the classifier is confident about. |
-| `--dry-run` | Show what would change, but write nothing. |
-| `--no-backup` | Skip the backup snapshot. Not recommended. |
-| `--force` | Run even on a dirty git tree. |
-| `--config <path>` | Use a different config file. |
-
-### Scanning specific files
-
-By default `scan` / `extract` / `doctor` walk all of `lib/`. To target a
-single screen, a folder, or any glob, pass one or more `--path` arguments
-(also available as `-p`):
-
-```bash
-# one file
-dart run l10n_automator extract --path lib/screens/login_page.dart
-
-# a whole folder
-dart run l10n_automator extract -p lib/screens
-
-# a glob — note the quotes so your shell doesn't expand it
-dart run l10n_automator scan -p 'lib/features/**/view/*.dart'
-
-# multiple targets in one run
-dart run l10n_automator extract \
-  -p lib/screens/login_page.dart \
-  -p lib/screens/signup_page.dart
-```
-
-The exclude rules from `.localizator.yaml` (generated files, tests, etc.)
-still apply on top of `--path`, so you can safely point it at a parent
-directory without dragging in `*.g.dart` siblings.
-
-### Per-file breakdown
-
-Big projects produce big totals. Add `--by-file` (`-f`) to see which files
-actually contain the work:
-
-```bash
-dart run l10n_automator scan --by-file
-dart run l10n_automator scan -f --top 20
-dart run l10n_automator scan -f --include-skip   # show "nothing to do" files too
-```
-
-Sample output:
-
-```
-Localization Automator — summary
-  files scanned  : 529
-  literals found : 13579
-    localize     : 36
-    review       : 4856
-    skip         : 8687
-  (no changes written)
-
-By file (top 50 of 312):
-  file                                                  localize  review  total
-  ----------------------------------------------------  --------  ------  -----
-  lib/features/news/view/news_detail_page.dart                12     184    196
-  lib/features/onboarding/view/welcome_page.dart               6      71     77
-  …
-```
-
-Rows are sorted by `localize + review` (descending), so the files that need
-your attention surface at the top — files whose only hits were skipped are
-hidden unless you pass `--include-skip`.
-
-## How it works
-
-1. **Detect** — read `pubspec.yaml` to figure out which l10n stack the project
-   uses, load `.localizator.yaml`, read the existing `app_en.arb`.
-2. **Scan** — walk `lib/` (honoring excludes), parse each file with
-   `package:analyzer`.
-3. **Classify** — every string literal is tagged `localize`, `skip`, or
-   `review` based on its surrounding context.
-4. **Plan** — generate keys, build a change-set, prompt the user for review
-   items (or skip them in `--auto`).
-5. **Apply** — smart-merge into ARB (reuses existing keys with matching values,
-   never overwrites translations in non-English files), rewrite source via AST
-   edits, inject the required import, run `dart format`, run `dart analyze`,
-   roll back on any new analyzer error.
-
-## What gets localized vs skipped
-
-**Localized:**
-
-- First positional `String` arg to `Text`, `SelectableText`, `RichText`,
-  `TextSpan`.
-- Named String args: `hintText`, `helperText`, `errorText`, `labelText`,
-  `prefixText`, `suffixText`, `counterText`, `tooltip`, `semanticsLabel`,
-  `message`.
-
-**Never localized (skipped automatically):**
-
-- URLs, asset paths, file extensions like `.png .svg .json`.
-- Strings inside `Image.asset`, `SvgPicture.asset`, `Lottie.asset`,
-  `AssetImage`, `rootBundle.load*`.
-- Routes — strings passed to `Navigator.pushNamed`, `pushReplacementNamed`,
-  GoRouter paths.
-- `print(...)`, `debugPrint(...)`, `developer.log(...)`, `logger.d/i/w/e(...)`,
-  `talker.info(...)`.
-- `RegExp(...)`, `DateFormat(...)`, `MethodChannel(...)`, `EventChannel(...)`,
-  `Uri.parse(...)`, `String.fromEnvironment(...)`.
-- Strings in annotations: `@JsonKey(name: ...)`, `@Deprecated(...)`.
-- Map literal keys and index lookups: `{'Content-Type': ...}`, `j['userId']`.
-- Empty strings, whitespace-only strings, strings with no letters.
-- Generated files: `*.g.dart`, `*.freezed.dart`, `*.gr.dart`, `*.mocks.dart`,
-  `*.config.dart`, `generated/`, `.dart_tool/`, `build/`.
-- Test files (`test/`, `integration_test/`) — translations would break
-  assertion-on-literal tests.
-
-**Flagged for review (skipped in `--auto`, prompted in interactive mode):**
-
-- Strings inside `throw Exception("…")` and similar — may or may not surface
-  to the UI.
-- Top-level `const` strings — could be a UI label or a config constant.
-- String concatenation with `+` — needs rewriting to interpolation first.
-- Anything the classifier doesn't have a positive UI signal for.
-
-## Inline directives
-
-Override the tool's decisions with comments on the line above a string:
-
-```dart
-// l10n:ignore
-final secret = 'AAAA-BBBB-CCCC';
-
-// l10n:key=loginCta
-Text('Sign in');
-```
-
-To opt out of an entire file, put this at the top:
-
-```dart
-// l10n_automator:ignore_for_file
-```
-
-The legacy `// localization_automator:ignore_for_file` spelling is also
-accepted.
-
-## Smart ARB merge
-
-When the tool generates a new key:
-
-- If the same value already exists in `app_en.arb` under any key, that key is
-  **reused** — no duplicate entries.
-- Existing keys in `app_en.arb` are **never renamed** by re-running the tool.
-- Translations in `app_es.arb`, `app_fr.arb`, etc. are **never overwritten**.
-- New keys are mirrored into other-locale files with a `[TODO]` prefix so
-  translators can find what needs work.
-- `@@locale`, `@@last_modified`, and `@key.description` metadata is preserved.
-
-The tool is **idempotent** — running it twice in a row produces no second-run
-changes.
+---
 
 ## Safety guarantees
 
-- Refuses to run on a dirty git tree unless you pass `--force`.
-- Backs up every file it's about to touch to `.localizator/backup/<timestamp>/`.
-  `rollback` restores from the most recent snapshot.
-- Runs `dart analyze` after rewriting. If new errors appear, the run is
-  automatically rolled back from the backup.
-- Runs `dart format` on every modified file so diffs stay minimal.
-- Never introduces a `BuildContext` dependency where one didn't exist. For
-  `flutter_localizations` (which needs `AppLocalizations.of(context)`), strings
-  in places without `BuildContext` in scope are skipped and reported via the
-  `doctor` command.
+- **Refuses to run on a dirty git tree** unless you pass `--force`.
+- **Snapshots** every file before touching it to `.localizator/backup/<timestamp>/`. `rollback` restores from the most recent snapshot.
+- **Runs `dart analyze`** after rewriting; if any new analyzer error appears, the whole run is rolled back automatically.
+- **Runs `dart format`** on every modified file so the diff stays minimal.
+- **Never invents a `BuildContext`.** For `flutter_localizations` (which needs `AppLocalizations.of(context)`), strings in places without a `BuildContext` in scope are left alone and reported in `doctor`.
+- **Smart ARB merge:** reuses existing keys when the value matches (no duplicates), never renames existing keys, never overwrites translations in non-English ARB files. Re-running the tool produces no new diff.
 
-## Configuration
+---
 
-The defaults are sensible; see `.localizator.yaml` after running `init` for the
-full schema. The main knobs:
+## FAQ / troubleshooting
 
-```yaml
-stack: auto                       # auto | flutter_localizations | easy_localization
-
-arb_dir: lib/l10n
-template_arb_file: app_en.arb
-output_class: AppLocalizations
-
-translations_dir: assets/translations   # easy_localization only
-fallback_locale: en
-
-key_naming:
-  style: camelCase
-  max_length: 40
-  prefix: ""
-
-min_string_length: 2
-
-ignore:
-  files: [...]      # glob list
-  patterns: [...]   # regex list
-  widgets: [...]    # callee names to skip
-
-review:
-  exceptions: true
-  top_level_consts: true
-
-context:
-  on_missing_build_context: skip
-
-post_actions:
-  run_formatter: true
-  run_analyzer: true
-  run_gen_l10n: true
-```
-
-## Pushing this package to GitHub
-
-The package is structured as a standard Flutter package and can be published
-straight from this folder:
+**Q: I pushed new code to GitHub but my Flutter project keeps using the old version.**
+A: `flutter pub get` won't re-fetch a `git:` dependency on a moving ref. Force-refresh with:
 
 ```bash
-cd path/to/Localization\ Automator
-git init
-git add .
-git commit -m "Initial commit: l10n_automator 0.1.0"
-git branch -M main
-git remote add origin https://github.com/InfinitieParasgiri/l10n_automator.git
-git push -u origin main
+flutter pub upgrade l10n_automator
+# if that doesn't pick it up:
+rm -rf ~/.pub-cache/git/l10n_automator-*
+flutter pub get
 ```
 
-Then any Flutter project can depend on it via the `git:` block shown in the
-**Install** section above.
+Confirm the new build is loaded by running `dart run l10n_automator scan --help` and looking for the new flags.
+
+**Q: My `lib/l10n/app_localizations_*.dart` files are showing up in the review queue.**
+A: Those are the *output* of `flutter gen-l10n` — they're already your translations. Add `lib/l10n/**` and `**/app_localizations*.dart` to `ignore.files` in `.localizator.yaml`.
+
+**Q: A `*_model.dart` file shows hundreds of `review` hits.**
+A: They're almost certainly JSON map keys (`json['id']`, `'name':`, etc.), not UI text. Confirm with `dart run l10n_automator doctor -p path/to/that_model.dart`. If everything in the review queue is short snake_case identifiers, exclude the file (or your whole model folder) in `ignore.files`.
+
+**Q: I ran `extract --auto` and the diff was tiny. Where are the rest of my strings?**
+A: `--auto` only rewrites the `localize` bucket. Anything the classifier wasn't sure about is in `review` and was deliberately left alone. Drop `--auto` for an interactive run, or use `doctor` to look at the review queue and decide what to do per-file.
+
+**Q: I want to undo a run.**
+A: `dart run l10n_automator rollback` restores from the most recent backup snapshot. Backups live under `.localizator/backup/<timestamp>/`.
+
+**Q: My git tree is dirty but I want to run anyway.**
+A: Pass `--force`. The clean-tree check is there to make sure you can always `git diff` to inspect what the tool changed — if you bypass it, you're mixing your own edits with the tool's.
+
+**Q: How do I pin to a specific commit instead of `main`?**
+A:
+```yaml
+l10n_automator:
+  git:
+    url: https://github.com/InfinitieParasgiri/l10n_automator.git
+    ref: <commit-sha-or-tag>
+```
+
+---
 
 ## Limitations
 
-- Uses `parseString` (syntactic only — no type resolution), so the classifier
-  works from naming heuristics rather than the actual static type. In practice
-  the safety rules + interactive review compensate; in `--auto` mode, anything
-  ambiguous is left alone.
-- Plural / gender ICU forms aren't auto-detected. Wrap them by hand using the
-  generated key as a starting point.
-- Strings built from multiple variables (`'$a $b'`) work via interpolation
-  placeholders, but if the expressions are complex, the generated placeholder
-  names may need a manual rename.
-- Doesn't handle cross-file `const` references — top-level constants are
-  flagged for review rather than inlined.
+- **Syntactic-only.** The classifier uses `parseString` (no type resolution), so it works from naming heuristics rather than the actual static type of an expression. This is why model-file false positives happen.
+- **No ICU plural/gender auto-detect.** You'll need to wrap pluralized strings by hand using the generated key as a starting point.
+- **Complex interpolations** (`'$a $b'` works fine; `'${user.profile?.displayName ?? "Guest"}'` may produce a placeholder name you'd want to rename manually).
+- **No cross-file `const` inlining.** Top-level constants are flagged for review rather than chased across files.
+
+---
 
 ## License
 
