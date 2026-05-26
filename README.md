@@ -301,6 +301,11 @@ output_class: AppLocalizations
 translations_dir: assets/translations
 fallback_locale: en
 
+# Optional: override the AppLocalizations import URI. Leave empty to let
+# the tool auto-detect (reads l10n.yaml + pubspec.yaml). Set this if
+# auto-detection picks the wrong path.
+localizations_import: ""
+
 key_naming:
   style: camelCase                # camelCase | snake_case
   max_length: 40
@@ -417,6 +422,16 @@ A: Those are the *output* of `flutter gen-l10n` — they're already your transla
 
 **Q: A `*_model.dart` file shows hundreds of `review` hits.**
 A: They're almost certainly JSON map keys (`json['id']`, `'name':`, etc.), not UI text. Confirm with `dart run l10n_automator doctor -p path/to/that_model.dart`. If everything in the review queue is short snake_case identifiers, exclude the file (or your whole model folder) in `ignore.files`.
+
+**Q: After `extract`, `dart analyze` failed with `Target of URI doesn't exist: 'package:flutter_gen/gen_l10n/app_localizations.dart'` and the run was rolled back.**
+A: Your project has `synthetic-package: false` in `l10n.yaml` (or your Flutter version defaults to it), so `AppLocalizations` lives on disk at `lib/<output-dir>/app_localizations.dart`, not under the synthetic `flutter_gen` package. Versions 0.1.1+ auto-detect this. If you're stuck on an older build, pin the import explicitly in `.localizator.yaml`:
+
+```yaml
+localizations_import: 'package:<your_pubspec_name>/l10n/app_localizations.dart'
+```
+
+**Q: After `extract`, `dart analyze` complained `Invalid constant value` and rolled back.**
+A: The string was inside a `const ...` expression (e.g. `const Text('Hi')`). A rewrite to `AppLocalizations.of(context)!.foo` is non-const, which breaks `const`. Versions 0.1.1+ classify these as `review` automatically. Either drop the surrounding `const`, or accept the prompt in interactive mode after you've removed it.
 
 **Q: I ran `extract --auto` and the diff was tiny. Where are the rest of my strings?**
 A: `--auto` only rewrites the `localize` bucket. Anything the classifier wasn't sure about is in `review` and was deliberately left alone. Drop `--auto` for an interactive run, or use `doctor` to look at the review queue and decide what to do per-file.

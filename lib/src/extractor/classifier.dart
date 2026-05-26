@@ -18,6 +18,7 @@ class CallSiteContext {
     this.isTopLevelConst = false,
     this.isInBinaryConcat = false,
     this.isInRouteNamedArg = false,
+    this.isInConstContext = false,
     this.parentDescription = 'unknown',
   });
 
@@ -41,6 +42,12 @@ class CallSiteContext {
   final bool isTopLevelConst;
   final bool isInBinaryConcat;
   final bool isInRouteNamedArg;
+
+  /// True if the string is inside a `const ...` expression (e.g.
+  /// `const Text('Hi')`, `const SomeWidget(label: 'Hi')`). The rewrite
+  /// would introduce a non-const call (`AppLocalizations.of(context)!.foo`),
+  /// breaking the const context — so we leave these for the human.
+  final bool isInConstContext;
 
   final String parentDescription;
 }
@@ -224,9 +231,20 @@ class Classifier {
     }
 
     // 5) UI-positive signals.
+    //
+    // If the string is inside a `const` expression, we'd otherwise rewrite
+    // it to a non-const `AppLocalizations.of(context)!.foo` call, which
+    // makes `const` invalid. Downgrade to review so the human can decide
+    // whether to drop the const or change the surrounding code.
     if (context.namedArgument != null &&
         _uiStringNamedArgs.contains(context.namedArgument) &&
         !_identifierNamedArgs.contains(context.namedArgument)) {
+      if (context.isInConstContext) {
+        return ClassificationResult(
+            Decision.review,
+            'UI named arg ${context.namedArgument}: inside const — '
+            'rewrite would break const-ness');
+      }
       return ClassificationResult(
           Decision.localize,
           'UI-typed named arg ${context.namedArgument}:');
@@ -235,6 +253,12 @@ class Classifier {
     if (context.positionalIndex == 0 &&
         context.constructorName != null &&
         _uiPositionalConstructors.contains(context.constructorName)) {
+      if (context.isInConstContext) {
+        return ClassificationResult(
+            Decision.review,
+            'first positional arg to ${context.constructorName} inside '
+            'const — rewrite would break const-ness');
+      }
       return ClassificationResult(
           Decision.localize,
           'first positional arg to ${context.constructorName}');

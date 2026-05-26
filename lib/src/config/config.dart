@@ -62,6 +62,7 @@ class Config {
     this.runFormatter = true,
     this.runAnalyzer = true,
     this.runGenL10n = true,
+    this.localizationsImport = '',
   });
 
   final L10nStack stack;
@@ -101,6 +102,11 @@ class Config {
   final bool runFormatter;
   final bool runAnalyzer;
   final bool runGenL10n;
+
+  /// Optional explicit import URI for AppLocalizations. When non-empty,
+  /// overrides auto-detection of synthetic vs on-disk paths. Example:
+  /// `package:my_app/l10n/app_localizations.dart`.
+  final String localizationsImport;
 
   /// Load config from `.localizator.yaml` at [projectRoot]; if missing, use
   /// defaults.
@@ -203,6 +209,8 @@ class Config {
       runAnalyzer:
           (post?['run_analyzer'] as bool?) ?? defaults.runAnalyzer,
       runGenL10n: (post?['run_gen_l10n'] as bool?) ?? defaults.runGenL10n,
+      localizationsImport:
+          (y['localizations_import'] as String?) ?? defaults.localizationsImport,
     );
   }
 

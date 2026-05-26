@@ -125,6 +125,7 @@ class _Visitor extends RecursiveAstVisitor<void> {
     var isTopLevelConst = false;
     var isInBinaryConcat = false;
     var isInRouteNamedArg = false;
+    var isInConstContext = false;
     var parentDesc = 'unknown';
 
     AstNode? cur = node.parent;
@@ -169,6 +170,13 @@ class _Visitor extends RecursiveAstVisitor<void> {
         final name = ctorName.name?.name;
         constructorName = name == null ? type : '$type.$name';
         parentDesc = '$constructorName(...)';
+        if (cur.keyword?.lexeme == 'const' || cur.isConst) {
+          isInConstContext = true;
+        } else {
+          // Walk above this ctor to find an enclosing const literal/ctor
+          // that would force this expression into a const context too.
+          isInConstContext = _enclosingConstContext(cur);
+        }
         break;
       } else if (cur is Annotation) {
         isInAnnotation = true;
@@ -229,8 +237,32 @@ class _Visitor extends RecursiveAstVisitor<void> {
       isTopLevelConst: isTopLevelConst,
       isInBinaryConcat: isInBinaryConcat,
       isInRouteNamedArg: isInRouteNamedArg,
+      isInConstContext: isInConstContext,
       parentDescription: parentDesc,
     );
+  }
+
+  /// Returns true if any ancestor of [node] is a const expression that
+  /// would force [node] (and its arguments) to be evaluated as const too.
+  bool _enclosingConstContext(AstNode node) {
+    AstNode? cur = node.parent;
+    while (cur != null) {
+      if (cur is InstanceCreationExpression &&
+          (cur.keyword?.lexeme == 'const' || cur.isConst)) {
+        return true;
+      }
+      if (cur is ListLiteral && cur.constKeyword?.lexeme == 'const') {
+        return true;
+      }
+      if (cur is SetOrMapLiteral && cur.constKeyword?.lexeme == 'const') {
+        return true;
+      }
+      // Stop at function/method boundaries — once we cross a closure, the
+      // outer const-ness no longer cascades.
+      if (cur is FunctionBody || cur is BlockFunctionBody) return false;
+      cur = cur.parent;
+    }
+    return false;
   }
 
   bool _wraps(AstNode container, AstNode target) {

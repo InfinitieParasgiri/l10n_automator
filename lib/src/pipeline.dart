@@ -95,7 +95,8 @@ class Pipeline {
 
     // 2. Resolve adapter for the detected/configured stack.
     final stack = StackDetector.resolve(config, projectRoot);
-    final adapter = L10nAdapter.forStack(stack, config);
+    final adapter =
+        L10nAdapter.forStack(stack, config, projectRoot: projectRoot);
 
     // 3. Walk + parse.
     final scanRoot = p.join(projectRoot, 'lib');

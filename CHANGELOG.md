@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.1
+
+- **Fix:** `flutter_localizations` adapter now detects projects that use
+  `synthetic-package: false` (or any `l10n.yaml` that generates
+  `app_localizations.dart` to disk under `lib/`). The injected import is
+  now `package:<your_app>/<output-dir>/<output-file>` instead of the
+  synthetic `package:flutter_gen/...` path.
+- **Fix:** strings inside `const` expressions (e.g. `const Text('Hi')`,
+  `const SomeWidget(label: 'Hi')`) are now classified as `review`
+  instead of `localize`, so `--auto` won't break const-ness with a
+  non-const `AppLocalizations.of(context)!...` call.
+- Optional override: set `localizations_import:` in `.localizator.yaml`
+  to pin a specific package URI when auto-detection isn't enough.
+
 ## 0.1.0
 
 Initial release as `l10n_automator` (Flutter package + CLI).
