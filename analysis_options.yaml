@@ -1,0 +1,15 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    - example/**
+    - test/fixtures/**
+    - .localizator/**
+
+linter:
+  rules:
+    - prefer_single_quotes
+    - prefer_const_constructors
+    - prefer_const_declarations
+    - directives_ordering
+    - sort_pub_dependencies
