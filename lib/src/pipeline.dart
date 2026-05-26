@@ -83,13 +83,21 @@ class Pipeline {
 
   Future<PipelineSummary> run() async {
     // 1. Git-clean check.
+    //
+    // We only refuse if there are uncommitted changes *inside* the scan
+    // target. Unrelated dirty files (pubspec.lock, .idea/..., other
+    // folders) are ignored because they can't end up in this run's diff.
     if (!dryRun && !force) {
       final git = GitCheck.inspect(projectRoot);
       if (git.isRepo && !git.isClean) {
-        throw StateError(
-          'Refusing to run on a dirty git tree. Commit/stash changes first, '
-          'or pass --force.\nDirty files:\n  ${git.dirtyFiles.take(10).join("\n  ")}',
-        );
+        final relevant = _relevantDirtyFiles(git.dirtyFiles);
+        if (relevant.isNotEmpty) {
+          throw StateError(
+            'Refusing to run on a dirty git tree inside the scan target. '
+            'Commit/stash changes first, or pass --force.\nDirty files in '
+            'scope:\n  ${relevant.take(10).join("\n  ")}',
+          );
+        }
       }
     }
 
@@ -341,6 +349,47 @@ class Pipeline {
       filesWritten: const [],
       byFile: byFile,
     );
+  }
+
+  /// Returns the subset of [dirtyFiles] that overlap with the run's scan
+  /// target — either the explicit [includePaths] (when given) or `lib/`.
+  /// Also always includes `lib/<arb-dir>/**` since the merger writes
+  /// there.
+  List<String> _relevantDirtyFiles(List<String> dirtyFiles) {
+    final scope = <String>{};
+    if (includePaths.isEmpty) {
+      scope.add('lib/');
+    } else {
+      for (final raw in includePaths) {
+        // Normalise leading "./" and trailing slashes for prefix matching.
+        var s = raw.replaceFirst(RegExp(r'^\./'), '');
+        if (!s.endsWith('/') &&
+            !s.contains('*') &&
+            !s.endsWith('.dart')) {
+          s = '$s/';
+        }
+        scope.add(s);
+      }
+    }
+    // The merger always touches the ARB directory.
+    scope.add('${config.arbDir.replaceAll(RegExp(r'/+$'), '')}/');
+
+    bool matches(String file) {
+      for (final s in scope) {
+        if (s.contains('*')) {
+          // Cheap glob: drop the wildcard tail and prefix-match.
+          final base = s.substring(0, s.indexOf('*'));
+          if (file.startsWith(base)) return true;
+        } else if (s.endsWith('/')) {
+          if (file.startsWith(s)) return true;
+        } else {
+          if (file == s) return true;
+        }
+      }
+      return false;
+    }
+
+    return dirtyFiles.where(matches).toList();
   }
 
   /// Scan and return the raw candidates (for doctor's detailed report).

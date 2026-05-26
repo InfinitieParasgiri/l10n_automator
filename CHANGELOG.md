@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.3
+
+- **New:** `go` command — one-shot extraction with `--auto` baked in
+  and a scoped dirty-tree check:
+
+  ```bash
+  dart run l10n_automator go -p lib/screens/<folder>
+  ```
+
+- **Improved:** the dirty-tree guard now only refuses if there are
+  uncommitted changes *inside the scan target* (or the ARB dir).
+  Unrelated dirty files (`pubspec.lock`, `.idea/...`, other folders)
+  no longer block the run. This applies to `extract`, `go`, and
+  `scan`/`doctor` (which never wrote anyway).
+- `--force` still bypasses the check entirely if you want.
+
 ## 0.1.2
 
 - **Fix:** pipeline now runs `flutter gen-l10n` BEFORE `dart analyze`, so

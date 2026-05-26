@@ -63,17 +63,19 @@ dart run l10n_automator init
 # 2. See what's hardcoded, file by file
 dart run l10n_automator scan --by-file
 
-# 3. Dry-run on one screen to preview changes
-dart run l10n_automator extract --dry-run -p lib/screens/login_page.dart
+# 3. One-shot extraction on one folder — no flags to remember
+dart run l10n_automator go -p lib/screens/<folder>
 
-# 4. Apply for real (interactive — you approve each "review" string)
-dart run l10n_automator extract -p lib/screens/login_page.dart
-
-# 5. If anything looks wrong, undo the last run
+# 4. If anything looks wrong, undo the last run
 dart run l10n_automator rollback
 ```
 
-That's the whole loop. Don't run `extract` over your whole `lib/` on the first try — see the next section.
+`go` is the friction-free wrapper: it runs `extract --auto`, only refuses
+on dirty files *inside the scan target*, and prints a clean summary at
+the end. For more control (interactive prompts, dry-runs, custom keys)
+use `extract` directly — see the [Commands](#commands) section.
+
+Don't run `go` over your whole `lib/` on the first try — see the next section.
 
 ---
 
@@ -183,7 +185,8 @@ Interactive `extract` prompts you for each one. `extract --auto` skips them all.
 |---|---|
 | `init` | Create `.localizator.yaml` in the project root with default settings. Add `--force` to overwrite an existing file. |
 | `scan` | Walk `lib/` (or `--path` targets), classify every string literal, print a summary. Never writes. |
-| `extract` | Run the full pipeline: extract → merge into ARB → rewrite source → format → analyze. Interactive by default. |
+| `go` | One-shot wrapper around `extract --auto`. Only refuses on dirty files *inside the scan target* — unrelated uncommitted changes don't block it. Use this when you want to type one command per folder. |
+| `extract` | Run the full pipeline: extract → merge into ARB → rewrite source → format → analyze. Interactive by default, supports `--auto`, `--dry-run`, custom paths. |
 | `doctor` | Validate config, report the detected stack, dump the review queue with each string's value and the reason it was flagged. |
 | `rollback` | Restore source files from the most recent backup snapshot. |
 

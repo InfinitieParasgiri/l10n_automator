@@ -4,6 +4,7 @@ import 'package:args/command_runner.dart';
 
 import 'package:l10n_automator/src/commands/doctor_command.dart';
 import 'package:l10n_automator/src/commands/extract_command.dart';
+import 'package:l10n_automator/src/commands/go_command.dart';
 import 'package:l10n_automator/src/commands/init_command.dart';
 import 'package:l10n_automator/src/commands/rollback_command.dart';
 import 'package:l10n_automator/src/commands/scan_command.dart';
@@ -17,6 +18,7 @@ Future<void> main(List<String> args) async {
     ..addCommand(InitCommand())
     ..addCommand(ScanCommand())
     ..addCommand(ExtractCommand())
+    ..addCommand(GoCommand())
     ..addCommand(DoctorCommand())
     ..addCommand(RollbackCommand());
   try {
