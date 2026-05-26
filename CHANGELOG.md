@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.2
+
+- **Fix:** pipeline now runs `flutter gen-l10n` BEFORE `dart analyze`, so
+  newly merged ARB keys exist as `AppLocalizations` getters when the
+  analyzer checks the rewritten source. Previously the analyzer saw the
+  new calls but not the new getters and rolled the run back.
+- **Fix:** backup snapshot now includes the ARB files and the generated
+  `app_localizations*.dart` files. A failed run (`analyze` or
+  `gen-l10n` errors) now restores the working tree completely — no more
+  leftover ARB / generated changes after a rollback.
+- `flutter gen-l10n` failures (e.g. malformed ARB) now trigger rollback
+  the same way analyzer errors do.
+
 ## 0.1.1
 
 - **Fix:** `flutter_localizations` adapter now detects projects that use

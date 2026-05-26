@@ -4,7 +4,7 @@ description: >-
   ARB/JSON localization files, and rewrites the source to use the project's
   localization API. Ships with a CLI plus small runtime Flutter helpers.
   Supports flutter_localizations and easy_localization.
-version: 0.1.1
+version: 0.1.2
 homepage: https://github.com/InfinitieParasgiri/l10n_automator
 repository: https://github.com/InfinitieParasgiri/l10n_automator
 issue_tracker: https://github.com/InfinitieParasgiri/l10n_automator/issues

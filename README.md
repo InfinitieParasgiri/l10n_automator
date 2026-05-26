@@ -430,6 +430,9 @@ A: Your project has `synthetic-package: false` in `l10n.yaml` (or your Flutter v
 localizations_import: 'package:<your_pubspec_name>/l10n/app_localizations.dart'
 ```
 
+**Q: After `extract`, `dart analyze` said `The getter '<key>' isn't defined for the type 'AppLocalizations'` and the run was rolled back.**
+A: This was a pipeline ordering bug — `dart analyze` ran before `flutter gen-l10n`, so the analyzer didn't see the new getters yet. Fixed in 0.1.2+. If you're on 0.1.1, manually re-run with `--no-backup --force` then run `flutter gen-l10n && dart analyze` yourself — but upgrading is easier.
+
 **Q: After `extract`, `dart analyze` complained `Invalid constant value` and rolled back.**
 A: The string was inside a `const ...` expression (e.g. `const Text('Hi')`). A rewrite to `AppLocalizations.of(context)!.foo` is non-const, which breaks `const`. Versions 0.1.1+ classify these as `review` automatically. Either drop the surrounding `const`, or accept the prompt in interactive mode after you've removed it.
 

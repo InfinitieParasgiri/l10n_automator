@@ -193,10 +193,28 @@ class Pipeline {
       );
     }
 
-    // 7. Backup.
+    // 7. Backup. Snapshot:
+    //    - every source file we're about to rewrite,
+    //    - every ARB file (the merger writes to these),
+    //    - every generated lib/<arb-dir>/app_localizations*.dart file
+    //      (flutter gen-l10n will regenerate these from the new ARBs).
     String? backupDir;
     if (takeBackup) {
-      final touched = toRewrite.map((c) => c.filePath).toSet();
+      final touched = <String>{
+        for (final c in toRewrite) c.filePath,
+      };
+      final arbDir = Directory(p.join(projectRoot, config.arbDir));
+      if (arbDir.existsSync()) {
+        for (final entity in arbDir.listSync(followLinks: false)) {
+          if (entity is! File) continue;
+          final name = p.basename(entity.path);
+          if (name.endsWith('.arb') ||
+              name.startsWith('app_localizations') ||
+              name == 'app_localizations.dart') {
+            touched.add(entity.path);
+          }
+        }
+      }
       backupDir = BackupManager(projectRoot).snapshot(touched);
     }
 
@@ -224,22 +242,31 @@ class Pipeline {
     );
     final rewriteResult = rewriter.apply(edits);
 
-    // 10. Format + analyze + (optionally) gen-l10n.
+    // 10. Format → gen-l10n → analyze.
+    //
+    // Order matters: `flutter gen-l10n` must regenerate AppLocalizations
+    // from the merged ARBs *before* `dart analyze` runs, otherwise the
+    // analyzer sees calls like `AppLocalizations.of(context)!.newKey`
+    // against the old class and complains about undefined getters.
     String? analyzeError;
     if (config.runFormatter) {
       await PostValidator.format(projectRoot, rewriteResult.filesWritten);
     }
-    if (config.runAnalyzer) {
+    if (config.runGenL10n && stack == L10nStack.flutterLocalizations) {
+      final genError = await PostValidator.genL10n(projectRoot);
+      if (genError != null) {
+        analyzeError = 'flutter gen-l10n failed:\n$genError';
+        if (takeBackup && backupDir != null) {
+          BackupManager(projectRoot).restore(backupDir);
+        }
+      }
+    }
+    if (analyzeError == null && config.runAnalyzer) {
       analyzeError = await PostValidator.analyze(projectRoot);
       if (analyzeError != null && takeBackup && backupDir != null) {
         // Restore from backup on analyze failure.
         BackupManager(projectRoot).restore(backupDir);
       }
-    }
-    if (analyzeError == null &&
-        config.runGenL10n &&
-        stack == L10nStack.flutterLocalizations) {
-      await PostValidator.genL10n(projectRoot);
     }
 
     return PipelineSummary(

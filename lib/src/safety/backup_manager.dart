@@ -11,6 +11,9 @@ class BackupManager {
   final String _backupRoot;
 
   /// Snapshot a set of files. Returns the absolute path to the snapshot dir.
+  /// Files that don't exist on disk are silently skipped — useful when the
+  /// caller passes a "might be touched" set that includes files about to be
+  /// created.
   String snapshot(Iterable<String> filesAbsolutePaths) {
     final stamp = DateTime.now()
         .toUtc()
@@ -19,11 +22,15 @@ class BackupManager {
         .replaceAll('.', '-');
     final dest = p.join(_backupRoot, stamp);
     Directory(dest).createSync(recursive: true);
+    final seen = <String>{};
     for (final src in filesAbsolutePaths) {
+      if (!seen.add(src)) continue;
+      final f = File(src);
+      if (!f.existsSync()) continue;
       final rel = p.relative(src, from: projectRoot);
       final target = File(p.join(dest, rel));
       target.parent.createSync(recursive: true);
-      File(src).copySync(target.path);
+      f.copySync(target.path);
     }
     return dest;
   }
